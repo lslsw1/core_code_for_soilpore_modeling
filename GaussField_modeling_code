@@ -1,0 +1,418 @@
+def generate_gaussian_random_field(size, correlation_length):
+    random_field = np.random.randn(*size)
+    smoothed_field = gaussian_filter(random_field, sigma=correlation_length)
+    return smoothed_field
+
+def threshold_field(field, porosity):
+    threshold = np.percentile(field, 100 * porosity)
+    return field > threshold
+
+def plot_3d_field(fields, title, colors, alphas):
+    fig = plt.figure()
+    ax = fig.add_subplot(111, projection='3d')
+
+    for i, field in enumerate(fields):
+        ax.voxels(~field, facecolors=colors[i], edgecolor='None', alpha=alphas[i])
+        ax.voxels(field, facecolors='blue', edgecolor='None', alpha=1)
+
+    plt.title(title)
+    plt.show()
+
+def plot_pores_only(field, title):
+    fig = plt.figure()
+    ax = fig.add_subplot(111, projection='3d')
+
+    pores = field == 0
+    ax.voxels(pores, facecolors='red', edgecolor='None', alpha=1)
+
+    plt.title(title)
+    plt.show()
+
+def plot_combined_pores(fields, colors, overlap_color='pink'):
+    size = fields[0].shape
+    combined_field = np.zeros(size, dtype=int)
+    color_field = np.empty(size, dtype=object)
+    color_field.fill(None)
+
+    for i, field in enumerate(fields):
+        pore_field = ~field
+        combined_field += pore_field.astype(int)
+        color_field[pore_field] = colors[i]
+
+    overlap_mask = combined_field > 1
+    color_field[overlap_mask] = overlap_color
+
+    fig = plt.figure()
+    ax = fig.add_subplot(111, projection='3d')
+    ax.voxels(np.ones(size, dtype=bool), facecolors='blue', edgecolor='None', alpha=1)  
+    ax.voxels(combined_field > 0, facecolors=color_field, edgecolor='None')
+
+    plt.title("Combined Pores from Multiple Fields")
+    plt.show()
+
+def calculate_porosity(field):
+    return 1 - np.mean(~field)
+
+def random_translate(field, max_shift):
+    shift = np.random.randint(-max_shift, max_shift + 1, size=3)
+    shifted_field = np.roll(field, shift, axis=(0, 1, 2))
+    return shifted_field
+
+def calculate_overlap(fields):
+    combined_field = np.zeros(fields[0].shape, dtype=int)
+    for field in fields:
+        combined_field += (~field).astype(int)
+    overlap = np.sum(combined_field > 1)
+    return overlap
+
+def simulated_annealing(fields, initial_temp=1000, cooling_rate=0.995, max_iterations=1000, max_shift=5):
+    current_fields = fields.copy()
+    current_overlap = calculate_overlap(current_fields)
+    best_fields = current_fields.copy()
+    min_overlap = current_overlap
+    temperature = initial_temp
+
+    for _ in range(max_iterations):
+        new_fields = [random_translate(field, max_shift) for field in current_fields]
+        new_overlap = calculate_overlap(new_fields)
+        delta_overlap = new_overlap - current_overlap
+
+        if delta_overlap < 0 or np.random.rand() < np.exp(-delta_overlap / temperature):
+            current_fields = new_fields
+            current_overlap = new_overlap
+
+            if current_overlap < min_overlap:
+                best_fields = current_fields.copy()
+                min_overlap = current_overlap
+
+        temperature *= cooling_rate
+
+    return best_fields
+
+size = (51, 51, 51)
+correlation_lengths = [3, 5, 7]
+porosities = [0.08, 0.08, 0.1]
+colors = ['red', 'green', 'yellow']
+alphas = [1, 1, 1]
+
+biphasic_fields = []
+for correlation_length, porosity in zip(correlation_lengths, porosities):
+    gaussian_random_field = generate_gaussian_random_field(size, correlation_length)
+    biphasic_field = threshold_field(gaussian_random_field, porosity)
+    biphasic_fields.append(biphasic_field)
+
+for i, field in enumerate(biphasic_fields):
+    plot_3d_field([field],
+                  f'Biphasic Field with Correlation Length {correlation_lengths[i]} and Porosity {porosities[i]}',
+                  [colors[i]], [alphas[i]])
+
+plot_combined_pores(biphasic_fields, colors, overlap_color='pink')
+
+redistributed_fields = simulated_annealing(biphasic_fields)
+
+plot_combined_pores(redistributed_fields, colors, overlap_color='pink')
+
+combined_redistributed_field = np.zeros(size, dtype=bool)
+for field in redistributed_fields:
+    combined_redistributed_field |= ~field
+
+redistributed_porosity = calculate_porosity(combined_redistributed_field)
+print(f'Redistributed Total Porosity: {redistributed_porosity}')
+
+root = Tk()
+root.title("3D Field Slicer and Morphological Operations")
+
+global models
+models = {
+    'A1': biphasic_fields[0],
+    'A2': biphasic_fields[1],
+    'A3': biphasic_fields[2],
+    'B': ~np.logical_or.reduce([~field for field in biphasic_fields]),
+    'C': ~np.logical_or.reduce([~field for field in redistributed_fields])
+}
+
+def update_slices(field, x_slice, y_slice, z_slice):
+    fig, axs = plt.subplots(1, 3, figsize=(15, 5))
+
+    slice_data = field[x_slice, :, :]
+    colored_slice = np.zeros((*slice_data.shape, 3))
+    colored_slice[slice_data == 1] = [0, 0, 1]
+    colored_slice[slice_data == 0] = [1, 0, 0]
+    axs[0].imshow(colored_slice)
+    axs[0].set_title(f'X Slice at index {x_slice}')
+
+    slice_data = field[:, y_slice, :]
+    colored_slice = np.zeros((*slice_data.shape, 3))
+    colored_slice[slice_data == 1] = [0, 0, 1]
+    colored_slice[slice_data == 0] = [1, 0, 0]
+    axs[1].imshow(colored_slice)
+    axs[1].set_title(f'Y Slice at index {y_slice}')
+
+    slice_data = field[:, :, z_slice]
+    colored_slice = np.zeros((*slice_data.shape, 3))
+    colored_slice[slice_data == 1] = [0, 0, 1]
+    colored_slice[slice_data == 0] = [1, 0, 0]
+    axs[2].imshow(colored_slice)
+    axs[2].set_title(f'Z Slice at index {z_slice}')
+
+    plt.show()
+
+def update_3d_slice(field, plane, index):
+    fig = plt.figure()
+    ax = fig.add_subplot(111, projection='3d')
+
+    slice_data = np.zeros_like(field)
+    cut_data = np.ones_like(field) * -1  
+
+    if plane == 'xy':
+        slice_data[:, :, index:] = field[:, :, index:]
+        cut_data[:, :, :index] = field[:, :, :index]
+    elif plane == 'xz':
+        slice_data[:, index:, :] = field[:, index:, :]
+        cut_data[:, :index, :] = field[:, :index, :]
+    elif plane == 'yz':
+        slice_data[index:, :, :] = field[index:, :, :]
+        cut_data[:index, :, :] = field[:index, :, :]
+
+    filled = slice_data == 1
+    voids = slice_data == 0
+    cut_filled = cut_data == 1
+    cut_voids = cut_data == 0
+
+    filled = np.logical_and(filled, cut_data == -1)
+    voids = np.logical_and(voids, cut_data == -1)
+
+    #ax.voxels(filled, facecolors='blue', edgecolor='None', alpha=1)
+    ax.voxels(voids, facecolors='red', edgecolor='None', alpha=1)
+
+    ax.set_xticks([])  # Hide x-axis ticks
+    ax.set_yticks([])  # Hide y-axis ticks
+    ax.set_zticks([])  # Hide z-axis ticks
+    ax.set_axis_off()  # Hide axis
+
+    plt.title(f'3D Slice at {plane}-plane index {index}')
+    plt.show()
+
+def update_3d_slice1(field, plane, index):
+    fig = plt.figure()
+    ax = fig.add_subplot(111, projection='3d')
+
+    slice_data = np.zeros_like(field)
+    cut_data = np.ones_like(field) * -1  
+
+    if plane == 'xy':
+        slice_data[:, :, index:] = field[:, :, index:]
+        cut_data[:, :, :index] = field[:, :, :index]
+    elif plane == 'xz':
+        slice_data[:, index:, :] = field[:, index:, :]
+        cut_data[:, :index, :] = field[:, :index, :]
+    elif plane == 'yz':
+        slice_data[index:, :, :] = field[index:, :, :]
+        cut_data[:index, :, :] = field[:index, :, :]
+
+    filled = slice_data == 1
+    voids = slice_data == 0
+    cut_filled = cut_data == 1
+    cut_voids = cut_data == 0
+
+    filled = np.logical_and(filled, cut_data == -1)
+    voids = np.logical_and(voids, cut_data == -1)
+
+    ax.voxels(filled, facecolors='blue', edgecolor='None', alpha=0.1)
+    ax.voxels(voids, facecolors='red', edgecolor='None', alpha=1)
+
+    ax.set_xticks([])  # Hide x-axis ticks
+    ax.set_yticks([])  # Hide y-axis ticks
+    ax.set_zticks([])  # Hide z-axis ticks
+    ax.set_axis_off()  # Hide axis
+
+    plt.title(f'3D Slice at {plane}-plane index {index}')
+    plt.show()
+
+def update_3d_slice2(field, plane, index):
+    fig = plt.figure()
+    ax = fig.add_subplot(111, projection='3d')
+
+    slice_data = np.zeros_like(field)
+    cut_data = np.ones_like(field) * -1  
+
+    if plane == 'xy':
+        slice_data[:, :, index:] = field[:, :, index:]
+        cut_data[:, :, :index] = field[:, :, :index]
+    elif plane == 'xz':
+        slice_data[:, index:, :] = field[:, index:, :]
+        cut_data[:, :index, :] = field[:, :index, :]
+    elif plane == 'yz':
+        slice_data[index:, :, :] = field[index:, :, :]
+        cut_data[:index, :, :] = field[:index, :, :]
+
+    filled = slice_data == 1
+    voids = slice_data == 0
+    cut_filled = cut_data == 1
+    cut_voids = cut_data == 0
+
+    filled = np.logical_and(filled, cut_data == -1)
+    voids = np.logical_and(voids, cut_data == -1)
+
+    ax.voxels(filled, facecolors='blue', edgecolor='None', alpha=0.3)
+    ax.voxels(voids, facecolors='red', edgecolor='None', alpha=1)
+
+    ax.set_xticks([])  # Hide x-axis ticks
+    ax.set_yticks([])  # Hide y-axis ticks
+    ax.set_zticks([])  # Hide z-axis ticks
+    ax.set_axis_off()  # Hide axis
+
+    plt.title(f'3D Slice at {plane}-plane index {index}')
+    plt.show()
+
+def update_3d_slice3(field, plane, index):
+    fig = plt.figure()
+    ax = fig.add_subplot(111, projection='3d')
+
+    slice_data = np.zeros_like(field)
+    cut_data = np.ones_like(field) * -1  
+
+    if plane == 'xy':
+        slice_data[:, :, index:] = field[:, :, index:]
+        cut_data[:, :, :index] = field[:, :, :index]
+    elif plane == 'xz':
+        slice_data[:, index:, :] = field[:, index:, :]
+        cut_data[:, :index, :] = field[:, :index, :]
+    elif plane == 'yz':
+        slice_data[index:, :, :] = field[index:, :, :]
+        cut_data[:index, :, :] = field[:index, :, :]
+
+    filled = slice_data == 1
+    voids = slice_data == 0
+    cut_filled = cut_data == 1
+    cut_voids = cut_data == 0
+
+    filled = np.logical_and(filled, cut_data == -1)
+    voids = np.logical_and(voids, cut_data == -1)
+
+    ax.voxels(filled, facecolors='blue', edgecolor='None', alpha=1)
+    ax.voxels(voids, facecolors='red', edgecolor='None', alpha=1)
+
+    # ax.set_xticks([])  # Hide x-axis ticks
+    # ax.set_yticks([])  # Hide y-axis ticks
+    # ax.set_zticks([])  # Hide z-axis ticks
+    # ax.set_axis_off()  # Hide axis
+
+    plt.title(f'3D Slice at {plane}-plane index {index}')
+    plt.show()
+
+def apply_morphological_operation(field, operation, structure_size):
+    
+    structure_element = np.ones((structure_size, structure_size, structure_size), dtype=bool)
+
+    if operation == 'erode':
+        eroded = binary_erosion(field == 0, structure=structure_element)
+        field = np.logical_not(eroded).astype(int)
+        return field
+    elif operation == 'dilate':
+        dilated = binary_dilation(field == 0, structure=structure_element)
+        field = np.logical_not(dilated).astype(int)
+        return field
+    else:
+        raise ValueError("Unknown operation")
+
+max_index = size[0] - 1  # Assuming cubic field for simplicity
+
+x_slider = Scale(root, from_=0, to=max_index, orient=HORIZONTAL, label="X Slice")
+x_slider.pack()
+
+y_slider = Scale(root, from_=0, to=max_index, orient=HORIZONTAL, label="Y Slice")
+y_slider.pack()
+
+z_slider = Scale(root, from_=0, to=max_index, orient=HORIZONTAL, label="Z Slice")
+z_slider.pack()
+
+plane_var = StringVar()
+plane_var.set("xy")
+plane_label = Label(root, text="3D Plane (xy/xz/yz):")
+plane_label.pack()
+plane_entry = Entry(root, textvariable=plane_var)
+plane_entry.pack()
+
+index_var = StringVar()
+index_var.set("25")
+index_label = Label(root, text="3D Plane Index:")
+index_label.pack()
+index_entry = Entry(root, textvariable=index_var)
+index_entry.pack()
+
+operation_var = StringVar()
+operation_var.set("erode")
+operation_label = Label(root, text="Operation (erode/dilate):")
+operation_label.pack()
+operation_entry = Entry(root, textvariable=operation_var)
+operation_entry.pack()
+
+structure_size_var = StringVar()
+structure_size_var.set("1")
+structure_size_label = Label(root, text="Structure Element Size (grid units):")
+structure_size_label.pack()
+structure_size_entry = Entry(root, textvariable=structure_size_var)
+structure_size_entry.pack()
+
+model_var = StringVar()
+model_var.set("A1")
+model_label = Label(root, text="Select Model (A1, A2, A3, B, C):")
+model_label.pack()
+model_entry = Entry(root, textvariable=model_var)
+model_entry.pack()
+
+global updated_field
+updated_field = models['A1']
+
+def on_update_slices(field):
+    x_slice = x_slider.get()
+    y_slice = y_slider.get()
+    z_slice = z_slider.get()
+    update_slices(field, x_slice, y_slice, z_slice)
+
+def show_original_3d():
+    model_key = model_var.get()
+    plot_3d_field([models[model_key]], f'Original 3D Field: {model_key}', colors, alphas)
+    plot_pores_only(models[model_key], f'Original 3D Pores: {model_key}')
+
+def show_updated_3d():
+    plot_3d_field([updated_field], f'Updated 3D Field: {model_var.get()}', colors, alphas)
+    plot_pores_only(updated_field, f'Updated 3D Pores: {model_var.get()}')
+
+def show_original_slices():
+    on_update_slices(models[model_var.get()])
+
+def show_updated_slices():
+    on_update_slices(updated_field)
+
+def apply_operation():
+    global updated_field
+    operation = operation_var.get()
+    structure_size = int(structure_size_var.get())
+    updated_field = apply_morphological_operation(models[model_var.get()], operation, structure_size)
+    plot_pores_only(updated_field, f'Updated 3D Pores after {operation} operation')
+
+def reset():
+    global updated_field
+    updated_field = models[model_var.get()]
+    show_original_3d()
+
+def show_3d_slice(field):
+    plane = plane_var.get()
+    index = int(index_var.get())
+    update_3d_slice(field, plane, index)
+    #update_3d_slice1(field, plane, index)
+    #update_3d_slice2(field, plane, index)
+    #update_3d_slice3(field, plane, index)
+
+Button(root, text="Show Original 3D Field", command=show_original_3d).pack()
+Button(root, text="Show Updated 3D Field", command=show_updated_3d).pack()
+Button(root, text="Show Original Slices", command=show_original_slices).pack()
+Button(root, text="Show Updated Slices", command=show_updated_slices).pack()
+Button(root, text="Apply Operation", command=apply_operation).pack()
+Button(root, text="Reset", command=reset).pack()
+Button(root, text="Show Original 3D Slice", command=lambda: show_3d_slice(models[model_var.get()])).pack()
+Button(root, text="Show Updated 3D Slice", command=lambda: show_3d_slice(updated_field)).pack()
+
+root.mainloop()
